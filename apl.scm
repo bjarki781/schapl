@@ -6,12 +6,23 @@
 ; * implement more monadic and dyadic operators
 ; * implement reduce and scan operators
 
+(define-syntax push!
+  (syntax-rules ()
+    ((push! list item)
+      (set! list (cons item list)))))
+
+(define-syntax dequote
+  (syntax-rules ()
+    ((dequote (quote thing)) (dequote thing))
+    ((dequote thing) thing)))
+      
+
 (define pi (* 4 (atan 1)))
 (define (dot f g) (lambda (x) (f (g x))))
 (define (swap op) (lambda (a b) (op b a)))
 (define (curry op a) (lambda (b) (op a b)))
-(define (liftify f) (lambda (mx) (f (first mx))))
-(define (liftify2 f) (lambda (mx my) (f (first mx) (first my))))
+(define (liftify f) (lambda (mx) (f (car mx))))
+(define (liftify2 f) (lambda (mx my) (f (car mx) (car my))))
 (define (dot-product x y)
   (cond
     ((not (= (length x) (length y))) (error "dot-product: vectors must be of same length"))
@@ -40,6 +51,27 @@
           ((eq? (list-ref lst index) elem)  index)
           (else (loop (1+ index))))))
     elems))
+
+(define (sort-index pred)
+  (lambda (l0)
+    (let qsort ((l l0) (indeces (iota (length l0))))
+      (cond
+        ((null? indeces) ())
+        (else (append
+          (qsort l (list-pred pred l (car indeces) (cdr indeces)))
+          (cons (car indeces) ())
+          (qsort l (list-pred (lambda (x y) (not (pred x y))) l (car indeces) (cdr indeces)))))))))
+
+(define (list-pred pred l a0 b0)
+  (let lp ((a a0) (b b0))
+    (cond
+      ((or (null? a) (null? b)) 
+        ())
+      ((pred (list-ref l a) (list-ref l (car b))) 
+        (lp a (cdr b)))
+      (else 
+        (cons (car b) (lp a (cdr b)))))))
+
 
 (define (apply-binary op arg1 arg2)
   (cond
@@ -124,13 +156,16 @@
      (b (from-our-boolean y)))
     (to-our-boolean (boolean/and a b))))
 
+(define (our-lambda args function)
+  (list (make-monadic "anonymous" (lambda args (eval function user-initial-environment)))))
+
 (define (reduce-expand a b)
-    (list (fold (arithmetic-ambi-dyadic (eval (first a) user-initial-environment)) (car b) (cdr b))))
+    (list (fold (arithmetic-ambi-dyadic (eval (car a) user-initial-environment)) (car b) (cdr b))))
 
 (define (ambi-template monadic-name dyadic-name monadic dyadic args)
   (cond
-    ((and (= (length args) 1) monadic) (monadic (first args)))
-    ((and (= (length args) 2) dyadic) (dyadic (first args) (second args)))
+    ((and (= (length args) 1) monadic) (monadic (car args)))
+    ((and (= (length args) 2) dyadic) (dyadic (car args) (cadr args)))
     (else (error (string-append (if monadic monadic-name dyadic-name) " error" (number->string (length args)))))))
 
 (define (arithmetic-ambi-template monadic-name dyadic-name monadic dyadic args)
@@ -159,7 +194,8 @@
 (define-structure arithmetic-dyadic name operation)
 
 ; this can be made much shorter with a macro, no?
-(define (apply-operator op . args) 
+(define (apply-operator op-id . args) 
+  (let ((op (cadr (assq op-id ov))))
   (cond 
    ((ambi? op) 
      (ambi-template (ambi-monadic-name op) (ambi-dyadic-name op) 
@@ -176,48 +212,56 @@
      (dyadic-template (dyadic-name op) (dyadic-operation op) args))
    ((arithmetic-dyadic? op) 
      (arithmetic-dyadic-template (arithmetic-dyadic-name op) (arithmetic-dyadic-opertion op) args))
-   (else (error "error"))))
+   (else (error "error")))))
 
-(define op-mul (make-arithmetic-ambi "signum"            "multiply"       signum         *))
-(define op-add (make-arithmetic-ambi "conjugate"         "addition"       (lambda (x) x) +))
-(define op-sub (make-arithmetic-ambi "negation"          "subtraction"    (curry * -1)   -))
-(define op-div (make-arithmetic-ambi "reciprocal"        "division"       (curry /  1)   /))
-(define op-ban (make-arithmetic-ambi "factorial"         "combinations"   fac            nCr))
-(define op-dea (make-arithmetic-ambi "roll "             "deal"           random-integer deal))
-(define op-abs (make-arithmetic-ambi "magnitude"         "residue"        abs            remainder))
-(define op-cei (make-arithmetic-ambi "ceiling"           "maximum"        ceiling        max))
-(define op-flo (make-arithmetic-ambi "floor"             "minimum"        floor          min))
-(define op-cir (make-arithmetic-ambi "multiply by pi"    "circle"         (curry * pi)   circle))
-(define op-exp (make-arithmetic-ambi "natural logarithm" "logarithm"      log            logt))
-(define op-exp (make-arithmetic-ambi "exponential"       "exponentiation" exp            expt))
 
-(define op-le  (make-arithmetic-dyadic "le"  (to-predicate < )))
-(define op-leq (make-arithmetic-dyadic "le"  (to-predicate <=)))
-(define op-eq  (make-arithmetic-dyadic "eq"  (to-predicate  =)))
-(define op-geq (make-arithmetic-dyadic "geq" (to-predicate >=)))
-(define op-ge  (make-arithmetic-dyadic "ge"  (to-predicate > )))
-(define op-neq (make-arithmetic-dyadic "neq" (to-predicate (lambda (x y) (not (= x y))))))
+(define ov
+  `((mul ,(make-arithmetic-ambi "signum"            "multiply"       signum         *))
+    (add ,(make-arithmetic-ambi "conjugate"         "addition"       (lambda (x) x) +))
+    (sub ,(make-arithmetic-ambi "negation"          "subtraction"    (curry * -1)   -))
+    (div ,(make-arithmetic-ambi "reciprocal"        "division"       (curry /  1)   /))
+    (ban ,(make-arithmetic-ambi "factorial"         "combinations"   fac            nCr))
+    (dea ,(make-arithmetic-ambi "roll "             "deal"           random-integer deal))
+    (abs ,(make-arithmetic-ambi "magnitude"         "residue"        abs            remainder))
+    (cei ,(make-arithmetic-ambi "ceiling"           "maximum"        ceiling        max))
+    (flo ,(make-arithmetic-ambi "floor"             "minimum"        floor          min))
+    (cir ,(make-arithmetic-ambi "multiply by pi"    "circle"         (curry * pi)   circle))
+    (exp ,(make-arithmetic-ambi "natural logarithm" "logarithm"      log            logt))
+    (exp ,(make-arithmetic-ambi "exponential"       "exponentiation" exp            expt))
 
-(define op-or  (make-arithmetic-dyadic "or"  our-or))
-(define op-and (make-arithmetic-dyadic "and" our-and))
+    (le  ,(make-arithmetic-dyadic "le"  (to-predicate < )))
+    (leq ,(make-arithmetic-dyadic "le"  (to-predicate <=)))
+    (eq  ,(make-arithmetic-dyadic "eq"  (to-predicate  =)))
+    (geq ,(make-arithmetic-dyadic "geq" (to-predicate >=)))
+    (ge  ,(make-arithmetic-dyadic "ge"  (to-predicate > )))
+    (neq ,(make-arithmetic-dyadic "neq" (to-predicate (lambda (x y) (not (= x y))))))
 
-(define op-mem (make-dyadic  "membership" membership))
-(define op-tak (make-dyadic  "take"       our-take))
-(define op-dro (make-dyadic  "drop"       our-drop))
-(define op-enc (make-dyadic  "encode"     encode))
-(define op-dec (make-dyadic  "decode"     decode))
-(define op-cat (make-dyadic  "catenate"   append))
-(define op-lef (make-dyadic  "left"       (lambda (l r) l)))
-(define op-rig (make-dyadic  "right"      (lambda (l r) r)))
-(define op-rho (make-monadic "length"     (lambda (l) (list (length l)))))
+    (or  ,(make-arithmetic-dyadic "or"  our-or))
+    (and ,(make-arithmetic-dyadic "and" our-and))
 
-(define op-iot (make-ambi "iota" "find" (liftify iota) find-index))
-(define op-red (make-dyadic "reduction/expansion" reduce-expand)) 
+    (mem ,(make-dyadic  "membership" membership))
+    (tak ,(make-dyadic  "take"       our-take))
+    (dro ,(make-dyadic  "drop"       our-drop))
+    (enc ,(make-dyadic  "encode"     encode))
+    (dec ,(make-dyadic  "decode"     decode))
+    (cat ,(make-dyadic  "catenate"   append))
+    (lef ,(make-dyadic  "left"       (lambda (l r) l)))
+    (rig ,(make-dyadic  "right"      (lambda (l r) r)))
+    (rho ,(make-monadic "length"     (lambda (l) (list (length l)))))
+    (gup ,(make-monadic "grade up"   (sort-index <)))
+    (gdo ,(make-monadic "grade down" (sort-index >)))
 
-(define (error str) (begin (display str) '()))
+    (iot ,(make-ambi "iota" "find" (liftify iota) find-index))
+    (red ,(make-dyadic "reduction/expansion" reduce-expand))
+
+    (lam ,(make-dyadic "lambda" our-lambda))
+
+    (ind ,(make-dyadic "list-ref" (lambda (l r) (map (curry list-ref l) r))))))
+
+(define (error str) (begin (display str) ()))
 (define (string-car str) (string-ref str 0))
 (define (string-cdr str) (string-tail str 1))
-(define (first-digit nustr) (char->digit (string-car nustr)))
+(define (car-digit nustr) (char->digit (string-car nustr)))
 (define (string-take-until str charset)
   (string-head str
     (let ((nextchar (string-find-next-char-in-set str charset)))
@@ -249,7 +293,7 @@
 
 (define (lex expr)
   (if (string-null? expr)
-    '()
+    ()
     (let* ((tok (reader expr)))
       (cons (string-trim tok) (lex (string-trim (string-tail expr (string-length tok))))))))
 
@@ -261,7 +305,7 @@
   (cond
     ((string-null? nustr) 0)
     (else
-      (+ (* (expt 10 (-1+ (string-length nustr))) (first-digit nustr))
+      (+ (* (expt 10 (-1+ (string-length nustr))) (car-digit nustr))
          (parse-number (string-cdr nustr))))))
 
 (define (parse-fraction nustr)
@@ -269,31 +313,36 @@
     (cond
       ((string-null? nustr) 0)
       (else
-        (+ (* (expt 10 (* -1 (string-length str))) (first-digit str))
+        (+ (* (expt 10 (* -1 (string-length str))) (car-digit str))
            (loop (string-cdr nustr)))))))
 
 (define (tokenize-array arrstr)
   (if (string-null? arrstr)
-    '()
+    ()
     (let* ((elem (string-take-until arrstr char-set:whitespace)))
       (cons (string-trim elem) (tokenize-array (string-trim (string-tail arrstr (string-length elem))))))))
 
+(define (string->number/symbol str)
+  (if (char-in-set? (string-car str) char-set:alphabetic) 
+      (string->symbol str) 
+      (string->number str)))
+
 (define (parse-array arrstr)
 ; (map parse-number (tokenize-array arrstr)))
-  (map string->number (tokenize-array arrstr)))
+  (map string->number/symbol (tokenize-array arrstr)))
 
 (define (false-check e) (if e e (error "undefined variable")))
 
-(define (substitute vars variable)
-  (second (false-check (assoc variable vars))))
+(define (substitute variable)
+  (cdr (false-check (assoc variable ov))))
 
-(define (parse-value vars valstr)
+(define (parse-value valstr)
   (cond
-    ((char-in-set? (string-car valstr) char-set:alphabetic) (substitute vars (intern valstr)))
+    ((char=? (string-car valstr) #\$) (substitute (intern (string-cdr valstr))))
     (else (parse-array valstr))))
 
 (define (parse-op opstr)
-  (symbol-append 'op- (intern (string-cdr opstr))))
+  (list 'quote (intern (string-cdr opstr))))
     ;  (if (eqv? (string-car opstr) #\#)
             ;    (symbol-append 'op- (intern (string-cdr opstr))))
     ;    (error (string-append "invalid operator: \"" opstr "\"" )))
@@ -306,34 +355,35 @@
       (display " ")
       (print-array (cdr array)))))
 
-(define (parse vars lexemes)
+(define (parse lexemes)
   (cond
     ((null? lexemes) 
-      (list vars ()))
+      ())
     ((= (length lexemes) 1)
       (cond 
-        ((left-parenthesis? (first lexemes))
-          `(,vars ',(eval (second (parse vars (lex (strip-parentheses (first lexemes))))) user-initial-environment)))
-        ((operator? (first lexemes)) 
-          `(,vars ',(list (parse-op (first lexemes)))))
+        ((equal? (car lexemes) "#quit") (list ''quit))
+        ((left-parenthesis? (car lexemes))
+          (eval (parse (lex (strip-parentheses (car lexemes)))) user-initial-environment))
+        ((operator? (car lexemes)) 
+          (list (parse-op (car lexemes))))
         (else 
-          `(,vars ',(parse-value vars (first lexemes))))))
-    ((equal? (second lexemes) "#assign")
-      `(,(cons (list (intern (first lexemes)) (eval (second (parse vars (cddr lexemes))) user-initial-environment)) vars) ()))
-    ((operator? (second lexemes)) ; binary
-      `(,vars (apply-operator ,(parse-op (second lexemes)) ,(second (parse vars (take lexemes 1))) ,(second (parse vars (cddr lexemes))))))
-    ((operator? (first lexemes)) ; unary
-      `(, vars (apply-operator ,(parse-op (first lexemes)) ,(second (parse vars (cdr lexemes))))))
+          (list 'quote (parse-value (car lexemes))))))
+    ((equal? (cadr lexemes) "#assign")
+      (begin (push! ov (list (string->symbol (car lexemes)) (eval (parse (cddr lexemes)) user-initial-environment))) ()))
+    ((operator? (cadr lexemes)) ; binary
+      (if (equal? (cadr lexemes) "#lam") 
+          `(car (apply-operator ,(parse-op (cadr lexemes)) ,(parse (take lexemes 1)) ',(parse (cddr lexemes))))
+          `(apply-operator ,(parse-op (cadr lexemes)) ,(parse (take lexemes 1)) ,(parse (cddr lexemes)))))
+    ((operator? (car lexemes)) ; unary
+      `(apply-operator ,(parse-op (car lexemes)) ,(parse (cdr lexemes))))
     (else (error "malformed expression"))))
 
-(define ov '((a (5)) (b (3))))
-(define (apl-repl vars)
+(define (apl-repl)
     (display "& ")
-    (let* ((parsed (parse vars (lex (read-line))))
-          (new-vars (first parsed))
-          (result (eval (second parsed) user-initial-environment)))
+    (let* ((parsed (parse (lex (read-line))))
+          (result (eval parsed user-initial-environment)))
             (print-array result)
             (newline)
-            (apl-repl new-vars)))
+            (if (equal? result 'quit) () (apl-repl))))
 
 
